@@ -4,7 +4,7 @@ CURRENT_DIR := $(patsubst %/,%,$(dir $(MAKEFILE_PATH)))
 
 RTL_DIR := $(CURRENT_DIR)/rtl
 MAKE ?= make
-SIM ?= verilator 
+SIM ?= icarus 
 
 .PHONY: rle
 rle:
