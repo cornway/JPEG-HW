@@ -356,10 +356,14 @@ def decodeBlockComponent(image: JPGImage, br: Bitreader,
     if length != 0 and coeff < (1 << (length - 1)):
         coeff -= (1 << length) - 1
 
+    for i in range(64):
+        component[i] = 0
+
     component[0] = coeff + previousDC
     previousDC = component[0]
 
-    for i in range(1, 64):
+    i = 1
+    while i < 64:
         symbol = getNextSymbol(br, acTable)
 
         if symbol == 0:
@@ -374,13 +378,17 @@ def decodeBlockComponent(image: JPGImage, br: Bitreader,
         i += numZeroes
 
         assert coeffLength <= 10, 'Error - AC coefficient length greater than 10'
-        coeff = br.readBits(coeffLength)
 
-        if coeffLength > 0 and coeff < (1 << (coeffLength - 1)):
-            coeff -= (1 << coeffLength) - 1
+        if coeffLength:
 
-        component[zigZagMap[i]] = coeff
+            coeff = br.readBits(coeffLength)
 
+            if coeffLength and coeff < (1 << (coeffLength - 1)):
+                coeff -= (1 << coeffLength) - 1
+
+            component[zigZagMap[i]] = coeff
+
+        i += 1
 
     return previousDC, skips, 
 
@@ -431,8 +439,6 @@ def readScans(br: Bitreader, image: JPGImage):
     current = br.readByte()
 
     while True:
-
-        print(f'{last=}, {current=}')
 
         assert last == 0xff, 'Error - Expected a marker'
 

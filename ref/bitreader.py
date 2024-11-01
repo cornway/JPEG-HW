@@ -37,8 +37,6 @@ class Bitreader:
                 while marker == 0xff:
                     marker = self.readByte()
 
-                marker = self.peekByte()
-
                 if marker == 0x00:
                     self.readByte()
                     break
@@ -55,7 +53,6 @@ class Bitreader:
         return bit
     
     def readBits(self, n):
-        assert n != 0
         bits = 0
         for _ in range(n):
             bit = self.readBit()
