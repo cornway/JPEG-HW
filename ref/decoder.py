@@ -785,13 +785,14 @@ def readJPG(fpath: str):
 
     YCbCrToRGB(image)
 
-    import os
-
-    writeBMP(image, fpath + '.bmp')
+    return image
 
 if __name__ == '__main__':
     import sys
 
     fpath = sys.argv[1]
+    outpath = sys.argv[2]
 
-    readJPG(fpath)
+    image = readJPG(fpath)
+
+    writeBMP(image, outpath)
