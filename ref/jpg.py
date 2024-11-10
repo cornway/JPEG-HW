@@ -104,10 +104,6 @@ zigZagMap = [
 def declList(_class, n, arg = None):
     return [(_class() if arg is None else _class(arg)) for _ in range(n)]
 
-class QuantizationTable:
-    table: list = declList(int, 64, 0)
-    set: bool = False
-
 class ColorComponent:
     horizontalSamplingFactor: int = 0
     verticalSamplingFactor: int = 0
@@ -141,7 +137,6 @@ class Block:
             self.cr_b = l.copy()
 
 class JPGImage:
-    quantizationTables: list = declList(QuantizationTable, 4)
     colorComponents: list = declList(ColorComponent, 4)
 
     frameType: int = 0
@@ -169,21 +164,3 @@ class JPGImage:
 
     horizontalSamplingFactor: int = 0
     verticalSamplingFactor: int = 0
-
-import math
-
-m0 = 2.0 * math.cos(1.0 / 16.0 * 2.0 * math.pi)
-m1 = 2.0 * math.cos(2.0 / 16.0 * 2.0 * math.pi)
-m3 = 2.0 * math.cos(2.0 / 16.0 * 2.0 * math.pi)
-m5 = 2.0 * math.cos(3.0 / 16.0 * 2.0 * math.pi)
-m2 = m0 - m5
-m4 = m0 + m5
-
-s0 = math.cos(0.0 / 16.0 * math.pi) / math.sqrt(8)
-s1 = math.cos(1.0 / 16.0 * math.pi) / 2.0
-s2 = math.cos(2.0 / 16.0 * math.pi) / 2.0
-s3 = math.cos(3.0 / 16.0 * math.pi) / 2.0
-s4 = math.cos(4.0 / 16.0 * math.pi) / 2.0
-s5 = math.cos(5.0 / 16.0 * math.pi) / 2.0
-s6 = math.cos(6.0 / 16.0 * math.pi) / 2.0
-s7 = math.cos(7.0 / 16.0 * math.pi) / 2.0

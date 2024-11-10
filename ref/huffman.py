@@ -4,9 +4,9 @@ from bitreader import *
 from jpg import *
 
 class HuffmanTable:
-    offsets: np.ndarray = np.zeros(17, dtype=np.uint16)
-    symbols: list = np.zeros(176, dtype=np.uint16)
-    codes: list = np.zeros(176, dtype=np.uint16)
+    offsets: np.ndarray
+    symbols: np.ndarray
+    codes: np.ndarray
     set: bool = False
 
 class HuffmanDecoder:
@@ -18,7 +18,7 @@ class HuffmanDecoder:
     def __init__(self, br: Bitreader) -> None:
         self.br = br
 
-    def generateCodes(self, offsets: list, codes: list):
+    def generateCodes(self, offsets: np.ndarray, codes: np.ndarray):
         code = 0
         for i in range(len(offsets)-1):
             for j in range(offsets[i], offsets[i + 1]):
@@ -43,24 +43,22 @@ class HuffmanDecoder:
             assert not hTable.set
             hTable.set = True
 
-            offsets = [0] * len(hTable.offsets)
-            symbols = [0] * len(hTable.symbols)
-            codes = [0] * len(hTable.codes)
+            hTable.offsets = np.zeros(17, dtype=np.int32)
+            hTable.symbols = np.zeros(176, dtype=np.int32)
+            hTable.codes = np.zeros(176, dtype=np.int32)
 
-            offsets[0] = 0
+            hTable.offsets[0] = 0
             allSymbols = 0
             for i in range(1, 17):
                 allSymbols += self.br.readByte()
-                offsets[i] = allSymbols
+                hTable.offsets[i] = allSymbols
 
             assert allSymbols <= 176, f'Error - Too many symbols in Huffman table: {allSymbols}'
 
             for i in range(allSymbols):
-                symbols[i] = self.br.readByte()
+                hTable.symbols[i] = self.br.readByte()
 
-            hTable.offsets = offsets
-            hTable.symbols = symbols
-            hTable.codes = self.generateCodes(offsets, codes)
+            self.generateCodes(hTable.offsets, hTable.codes)
 
             length -= 17 + allSymbols
 
@@ -126,6 +124,35 @@ class HuffmanDecoder:
             i += 1
 
         return previousDC
+
+    def decodeHuffmanData(self, image: JPGImage):
+        previousDCs = [0] * 3
+
+        luminanceOnly = image.componentsInScan == 1 and image.colorComponents[0].usedInScan
+        yStep = 1 if luminanceOnly else image.verticalSamplingFactor
+        xStep = 1 if luminanceOnly else image.horizontalSamplingFactor
+        restartInterval = int(image.restartInterval * xStep * yStep)
+
+        for y in range(0, image.blockHeight, yStep):
+            for x in range(0, image.blockWidth, xStep):
+                if restartInterval != 0 and ((y * image.blockWidthReal + x) % restartInterval) == 0:
+                    previousDCs = [0] * 3
+                    self.br.align()
+
+                for i in range(image.numComponents):
+                    component: ColorComponent = image.colorComponents[i]
+                    if component.usedInScan:
+
+                        for v in range(yStep):
+                            for h in range(xStep):
+                                block = image.blocks[(y + v) * image.blockWidthReal + (x + h)].get(i)
+                                previousDCs[i] = self.decodeBlockComponent(
+                                        block,
+                                        previousDCs[i],
+                                        component.huffmanDCTableID,
+                                        component.huffmanACTableID)
+
+                                image.blocks[(y + v) * image.blockWidthReal + (x + h)].set(i, block)
 
 
     def printScanInfo(self):
