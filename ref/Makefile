@@ -8,4 +8,4 @@ IMAGE += cat
 .PHONY: all
 all:
 	$(PYTHON) $(CURRENT_DIR)/decoder.py $(ASSETS_DIR)/$(IMAGE).jpg $(IMAGE).bmp
-	diff $(IMAGE).bmp $(ASSETS_DIR)/$(IMAGE).ref.bmp
+	@diff $(IMAGE).bmp $(ASSETS_DIR)/$(IMAGE).ref.bmp

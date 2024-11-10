@@ -1,712 +1,564 @@
 
 from bitreader import *
 from jpg import *
+from huffman import *
 
-def readStartOfFrame(br: Bitreader, image: JPGImage):
-    print('Reading SOF Marker')
-    assert image.numComponents == 0, 'Error - Multiple SOFs detected'
+class Decoder:
 
-    length = br.readWord()
-    precission = br.readByte()
+    br: Bitreader
+    image: JPGImage
+    huff: HuffmanDecoder
 
-    assert precission == 8, f'Error - Invalid precision: {precission}'
+    def __init__(self, br: Bitreader) -> None:
+        self.br = br
+        self.image = JPGImage()
+        self.huff = HuffmanDecoder(br)
 
-    image.height = br.readWord()
-    image.width = br.readWord()
+    def readStartOfFrame(self):
+        print('Reading SOF Marker')
+        assert self.image.numComponents == 0, 'Error - Multiple SOFs detected'
 
-    assert image.height != 0 and image.width != 0, 'Error - Invalid dimensions'
+        length = self.br.readWord()
+        precission = self.br.readByte()
 
-    image.blockHeight = (image.height + 7) // 8
-    image.blockWidth = (image.width + 7) // 8
-    image.blockHeightReal = image.blockHeight
-    image.blockWidthReal = image.blockWidth
+        assert precission == 8, f'Error - Invalid precision: {precission}'
 
-    image.numComponents = br.readByte()
+        self.image.height = self.br.readWord()
+        self.image.width = self.br.readWord()
 
-    assert image.numComponents != 4, 'Error - CMYK color mode not supported'
-    assert image.numComponents == 1 or image.numComponents == 3, \
-        f'Error - {image.numComponents} color components given (1 or 3 required)'
+        assert self.image.height != 0 and self.image.width != 0, 'Error - Invalid dimensions'
 
-    for i in range(image.numComponents):
-        componentID = br.readByte()
+        self.image.blockHeight = (self.image.height + 7) // 8
+        self.image.blockWidth = (self.image.width + 7) // 8
+        self.image.blockHeightReal = self.image.blockHeight
+        self.image.blockWidthReal = self.image.blockWidth
 
-        if componentID == 0 and i == 0:
-            image.zeroBased = True
+        self.image.numComponents = self.br.readByte()
 
-        if image.zeroBased:
-            componentID += 1
+        assert self.image.numComponents != 4, 'Error - CMYK color mode not supported'
+        assert self.image.numComponents == 1 or self.image.numComponents == 3, \
+            f'Error - {self.image.numComponents} color components given (1 or 3 required)'
 
-        assert componentID != 0 and componentID <= image.numComponents, \
-            f'Error - Invalid component ID: {componentID}'
-        
-        component: ColorComponent = image.colorComponents[componentID - 1]
-        assert not component.usedInFrame, f'Error - Duplicate color component ID: {componentID}'
+        for i in range(self.image.numComponents):
+            componentID = self.br.readByte()
 
-        component.usedInFrame = True
-        samplingFactor = br.readByte()
-        component.horizontalSamplingFactor = samplingFactor >> 4
-        component.verticalSamplingFactor = samplingFactor & 0x0F
+            if componentID == 0 and i == 0:
+                self.image.zeroBased = True
 
-        if componentID == 1:
-            assert component.horizontalSamplingFactor == 1 and component.horizontalSamplingFactor != 2, \
-                'Error - Sampling factors not supported'
-            assert component.verticalSamplingFactor == 1 and component.verticalSamplingFactor != 2, \
-                'Error - Sampling factors not supported'
+            if self.image.zeroBased:
+                componentID += 1
 
-            if (component.horizontalSamplingFactor == 2 and image.blockWidth % 2 == 1):
-                image.blockWidthReal += 1
-
-            if (component.verticalSamplingFactor == 2 and image.blockHeight % 2 == 1):
-                image.blockHeightReal += 1
-
-            image.horizontalSamplingFactor = component.horizontalSamplingFactor
-            image.verticalSamplingFactor = component.verticalSamplingFactor
-        else:
-            assert component.horizontalSamplingFactor == 1 and component.verticalSamplingFactor == 1, \
-                'Error - Sampling factors not supported'
+            assert componentID != 0 and componentID <= self.image.numComponents, \
+                f'Error - Invalid component ID: {componentID}'
             
-        component.quantizationTableID = br.readByte()
-        assert component.quantizationTableID <= 3, f'Error - Invalid quantization table ID: {component.quantizationTableID}'
+            component: ColorComponent = self.image.colorComponents[componentID - 1]
+            assert not component.usedInFrame, f'Error - Duplicate color component ID: {componentID}'
 
-    assert length - 8 - (3 * image.numComponents) == 0, 'Error - SOF invalid'
+            component.usedInFrame = True
+            samplingFactor = self.br.readByte()
+            component.horizontalSamplingFactor = samplingFactor >> 4
+            component.verticalSamplingFactor = samplingFactor & 0x0F
+
+            if componentID == 1:
+                assert component.horizontalSamplingFactor == 1 and component.horizontalSamplingFactor != 2, \
+                    'Error - Sampling factors not supported'
+                assert component.verticalSamplingFactor == 1 and component.verticalSamplingFactor != 2, \
+                    'Error - Sampling factors not supported'
+
+                if (component.horizontalSamplingFactor == 2 and self.image.blockWidth % 2 == 1):
+                    self.image.blockWidthReal += 1
+
+                if (component.verticalSamplingFactor == 2 and self.image.blockHeight % 2 == 1):
+                    self.image.blockHeightReal += 1
+
+                self.image.horizontalSamplingFactor = component.horizontalSamplingFactor
+                self.image.verticalSamplingFactor = component.verticalSamplingFactor
+            else:
+                assert component.horizontalSamplingFactor == 1 and component.verticalSamplingFactor == 1, \
+                    'Error - Sampling factors not supported'
+                
+            component.quantizationTableID = self.br.readByte()
+            assert component.quantizationTableID <= 3, f'Error - Invalid quantization table ID: {component.quantizationTableID}'
+
+        assert length - 8 - (3 * self.image.numComponents) == 0, 'Error - SOF invalid'
 
 
-def readQuantizationTable(br: Bitreader, image: JPGImage):
-    print('Reading DQT Marker')
+    def readQuantizationTable(self):
+        print('Reading DQT Marker')
 
-    length = br.readWord()
-    length -= 2
+        length = self.br.readWord()
+        length -= 2
 
-    while length > 0:
-        tableInfo = br.readByte()
-        length -= 1
-        tableID = tableInfo & 0x0f
+        while length > 0:
+            tableInfo = self.br.readByte()
+            length -= 1
+            tableID = tableInfo & 0x0f
 
-        assert tableID <= 3, f'Error - Invalid quantization table ID: {tableID}'
+            assert tableID <= 3, f'Error - Invalid quantization table ID: {tableID}'
 
-        qTable: QuantizationTable = image.quantizationTables[tableID]
-        assert not qTable.set
-        qTable.set = True
+            qTable: QuantizationTable = self.image.quantizationTables[tableID]
+            assert not qTable.set
+            qTable.set = True
 
-        table = [0] * len(qTable.table)
+            table = [0] * len(qTable.table)
 
-        if (tableInfo >> 4) != 0:
-            for i in range(64):
-                table[zigZagMap[i]] = br.readWord()
-            length -= 128
-        else:
-            for i in range(64):
-                table[zigZagMap[i]] = br.readByte()
-            length -= 64
+            if (tableInfo >> 4) != 0:
+                for i in range(64):
+                    table[zigZagMap[i]] = self.br.readWord()
+                length -= 128
+            else:
+                for i in range(64):
+                    table[zigZagMap[i]] = self.br.readByte()
+                length -= 64
 
-        qTable.table = table
+            qTable.table = table
 
-def generateCodes(offsets: list, codes: list):
-    code = 0
-    for i in range(len(offsets)-1):
-        for j in range(offsets[i], offsets[i + 1]):
-            codes[j] = code
-            code += 1
-        code <<= 1
-    return codes
+    def readRestartInterval(self):
+        print('Reading DRI Marker')
 
-def readHuffmanTable(br: Bitreader, image: JPGImage):
-    print('Reading DHT Marker')
-    length = br.readWord()
-    length -= 2
+        length = self.br.readWord()
+        self.image.restartInterval = self.br.readWord()
+        assert length - 4 == 0, 'Error - DRI invalid'
 
-    while length > 0:
-        tableInfo = br.readByte()
-        tableID = tableInfo & 0x0f
-        acTable = tableInfo >> 4
+    def readAPPN(self):
+        print('Reading APPN Marker')
+        length = self.br.readWord()
 
-        assert tableID <= 3, f'Error - Invalid Huffman table ID: {tableID}'
+        assert length >= 2, 'Error - APPN invalid'
 
-        hTable: HuffmanTable = image.huffmanACTables[tableID] if acTable else image.huffmanDCTables[tableID]
-        assert not hTable.set
-        hTable.set = True
+        for _ in range(length-2):
+            self.br.readByte()
 
-        offsets = [0] * len(hTable.offsets)
-        symbols = [0] * len(hTable.symbols)
-        codes = [0] * len(hTable.codes)
+    def readComment(self):
+        print('Reading COM Marker')
+        length = self.br.readWord()
 
-        offsets[0] = 0
-        allSymbols = 0
-        for i in range(1, 17):
-            allSymbols += br.readByte()
-            offsets[i] = allSymbols
+        assert length >= 2, 'Error - COM invalid'
 
-        assert allSymbols <= 176, f'Error - Too many symbols in Huffman table: {allSymbols}'
+        for _ in range(length-2):
+            self.br.readByte()
 
-        for i in range(allSymbols):
-            symbols[i] = br.readByte()
+    def readFrameHeader(self):
+        last = self.br.readByte()
+        current = self.br.readByte()
 
-        hTable.offsets = offsets
-        hTable.symbols = symbols
-        hTable.codes = generateCodes(offsets, codes)
+        assert (last == 0xff) and (current == JPG.SOI), 'Error - SOI invalid'
 
-        length -= 17 + allSymbols
+        last = self.br.readByte()
+        current = self.br.readByte()
 
-def readRestartInterval(br: Bitreader, image: JPGImage):
-    print('Reading DRI Marker')
+        while self.image.valid:
+            assert last == 0xff, 'Error - Expected a marker'
 
-    length = br.readWord()
-    image.restartInterval = br.readWord()
-    assert length - 4 == 0, 'Error - DRI invalid'
+            if current == JPG.SOF0:
+                self.image.frameType = JPG.SOF0
+                self.readStartOfFrame()
+            elif current == JPG.SOF2:
+                self.image.frameType = JPG.SOF2
+                self.readStartOfFrame()
+            elif current == JPG.DQT:
+                self.readQuantizationTable()
+            elif current == JPG.DHT:
+                self.huff.readHuffmanTable()
+            elif current == JPG.SOS:
+                break
+            elif current == JPG.DRI:
+                self.readRestartInterval()
+            elif current >= JPG.APP0 and current <= JPG.APP15:
+                self.readAPPN()
+            elif current == JPG.COM:
+                self.readComment()
+            elif (current >= JPG.JPG0 and current <= JPG.JPG13) or \
+                    current == JPG.DNL or \
+                    current == JPG.DHP or \
+                    current == JPG.EXP:
+                self.readComment()
 
-def readAPPN(br: Bitreader, image: JPGImage):
-    print('Reading APPN Marker')
-    length = br.readWord()
+            elif current == JPG.TEM:
+                pass
 
-    assert length >= 2, 'Error - APPN invalid'
+            elif current == 0xff:
+                current = self.br.readByte()
+                continue
+            else:
+                assert current != JPG.SOI, 'Error - Embedded JPGs not supported'
+                assert current != JPG.EOI, 'Error - EOI detected before SOS'
+                assert current != JPG.DAC, 'Error - Arithmetic Coding mode not supported'
+                assert current < JPG.SOF0 and current > JPG.SOF15, f'Error - SOF marker not supported: {hex(current)}'
+                assert current < JPG.RST0 and current > JPG.RST7, 'Error - RSTN detected before SOS'
 
-    for i in range(length-2):
-        br.readByte()
+                assert False, f'Error - Unknown marker: {hex(current)}'
 
-def readComment(br: Bitreader, image: JPGImage):
-    print('Reading COM Marker')
-    length = br.readWord()
+            last = self.br.readByte()
+            current = self.br.readByte()
 
-    assert length >= 2, 'Error - COM invalid'
+    def readStartOfScan(self):
+        print('Reading SOS Marker')
 
-    for i in range(length-2):
-        br.readByte()
-
-def readFrameHeader(br: Bitreader, image: JPGImage):
-    last = br.readByte()
-    current = br.readByte()
-
-    assert (last == 0xff) and (current == JPG.SOI), 'Error - SOI invalid'
-
-    last = br.readByte()
-    current = br.readByte()
-
-    while image.valid:
-        assert last == 0xff, 'Error - Expected a marker'
-
-        if current == JPG.SOF0:
-            image.frameType = JPG.SOF0
-            readStartOfFrame(br, image)
-        elif current == JPG.SOF2:
-            image.frameType = JPG.SOF2
-            readStartOfFrame(br, image)
-        elif current == JPG.DQT:
-            readQuantizationTable(br, image)
-        elif current == JPG.DHT:
-            readHuffmanTable(br, image)
-        elif current == JPG.SOS:
-            break
-        elif current == JPG.DRI:
-            readRestartInterval(br, image)
-        elif current >= JPG.APP0 and current <= JPG.APP15:
-            readAPPN(br, image)
-        elif current == JPG.COM:
-            readComment(br, image)
-        elif (current >= JPG.JPG0 and current <= JPG.JPG13) or \
-                current == JPG.DNL or \
-                current == JPG.DHP or \
-                current == JPG.EXP:
-            readComment(br, image)
-
-        elif current == JPG.TEM:
-            pass
-
-        elif current == 0xff:
-            current = br.readByte()
-            continue
-        else:
-            assert current != JPG.SOI, 'Error - Embedded JPGs not supported'
-            assert current != JPG.EOI, 'Error - EOI detected before SOS'
-            assert current != JPG.DAC, 'Error - Arithmetic Coding mode not supported'
-            assert current < JPG.SOF0 and current > JPG.SOF15, f'Error - SOF marker not supported: {hex(current)}'
-            assert current < JPG.RST0 and current > JPG.RST7, 'Error - RSTN detected before SOS'
-
-            assert False, f'Error - Unknown marker: {hex(current)}'
-
-        last = br.readByte()
-        current = br.readByte()
-
-def readStartOfScan(br: Bitreader, image: JPGImage):
-    print('Reading SOS Marker')
-
-    assert image.numComponents != 0
-    length = br.readWord()
-    
-    for i in range(image.numComponents):
-        image.colorComponents[i].usedInScan = False
-
-    image.componentsInScan = br.readByte()
-    assert image.componentsInScan != 0
-
-    for i in range (image.componentsInScan):
-        componentID = br.readByte()
-
-        if image.zeroBased:
-            componentID += 1
-
-        assert componentID != 0 and componentID <= image.numComponents, \
-            f'Error - Invalid color component ID: {componentID}'
+        assert self.image.numComponents != 0
+        length = self.br.readWord()
         
-        component: ColorComponent = image.colorComponents[componentID - 1]
-        assert component.usedInFrame, f'Error - Invalid color component ID: {componentID}'
+        for i in range(self.image.numComponents):
+            self.image.colorComponents[i].usedInScan = False
 
-        assert not component.usedInScan, f'Error - Duplicate color component ID: {componentID}'
+        self.image.componentsInScan = self.br.readByte()
+        assert self.image.componentsInScan != 0
 
-        component.usedInScan = True
+        for i in range (self.image.componentsInScan):
+            componentID = self.br.readByte()
 
-        huffmanTableIDs = br.readByte()
-        component.huffmanDCTableID = huffmanTableIDs >> 4
-        component.huffmanACTableID = huffmanTableIDs & 0x0F
+            if self.image.zeroBased:
+                componentID += 1
 
-        assert component.huffmanDCTableID <= 3, f'Error - Invalid Huffman DC table ID: {component.huffmanDCTableID}'
-        assert component.huffmanACTableID <= 3, f'Error - Invalid Huffman AC table ID: {component.huffmanACTableID}'
-
-    image.startOfSelection = br.readByte()
-    image.endOfSelection = br.readByte()
-    successiveApproximation = br.readByte()
-
-    image.successiveApproximationHigh = successiveApproximation >> 4
-    image.successiveApproximationLow = successiveApproximation & 0x0F
-
-    if image.frameType == JPG.SOF0:
-        assert image.startOfSelection == 0 and image.endOfSelection == 63, \
-            'Error - Invalid spectral selection'
-        
-        assert image.successiveApproximationHigh == 0 and image.successiveApproximationLow == 0, \
-            'Error - Invalid successive approximation'
-    elif image.frameType == JPG.SOF2:
-        assert False, 'JPG.SOF2: Not supported'
-
-    for i in range(image.numComponents):
-        component: ColorComponent = image.colorComponents[i]
-
-        if component.usedInScan:
-            assert image.huffmanDCTables[component.huffmanDCTableID].set, \
-                'Error - Color component using uninitialized Huffman DC table'
-
-            assert image.huffmanACTables[component.huffmanACTableID].set, \
-                'Error - Color component using uninitialized Huffman AC table'
-
-    assert length - 6 - (2 * image.componentsInScan) == 0, 'Error - SOS invalid'
-
-def printScanInfo(image: JPGImage):
-    print("SOS=============\n")
-    print(f"Start of Selection: {image.startOfSelection}")
-    print(f"End of Selection: {image.endOfSelection}")
-    print(f"Successive Approximation High: {image.successiveApproximationHigh}")
-    print(f"Successive Approximation Low: {image.successiveApproximationLow}")
-    print("Color Components:\n")
-    for i in range(image.numComponents):
-        if (image.colorComponents[i].usedInScan):
-            print(f"Component ID: {(i + 1)}")
-            print(f"Huffman DC Table ID: {image.colorComponents[i].huffmanDCTableID}")
-            print(f"Huffman AC Table ID: {image.colorComponents[i].huffmanACTableID}")
-
-    print("DHT=============\n")
-    print("DC Tables:\n")
-    for i in range(4):
-        if (image.huffmanDCTables[i].set):
-            print(f"Table ID: {i}")
-            print("Symbols:\n")
-            for j in range(16):
-                print(f"{(j + 1)}: ", end='')
-                for k in range(image.huffmanDCTables[i].offsets[j], image.huffmanDCTables[i].offsets[j + 1]):
-                    print(f"{hex(image.huffmanDCTables[i].symbols[k])} ", end='')
-                print("")
- 
-    print("AC Tables:\n")
-    for i in range(4):
-        if (image.huffmanACTables[i].set):
-            print(f"Table ID: {i}")
-            print("Symbols:\n")
-            for j in range(16):
-                print(f"{(j + 1)}: ", end='')
-                for k in range(image.huffmanACTables[i].offsets[j], image.huffmanACTables[i].offsets[j + 1]):
-                    print(f"{hex(image.huffmanACTables[i].symbols[k])} ", end='')
-                print("")
-
-    print("DRI=============\n")
-    print(f"Restart Interval: {image.restartInterval}")
-
-def getNextSymbol(br: Bitreader, hTable: HuffmanTable):
-    currentCode = 0
-
-    for i in range(16):
-        bit = br.readBit()
-        currentCode = (currentCode << 1) | bit
-        for j in range(hTable.offsets[i], hTable.offsets[i+1]):
-            if currentCode == hTable.codes[j]:
-                return hTable.symbols[j]
+            assert componentID != 0 and componentID <= self.image.numComponents, \
+                f'Error - Invalid color component ID: {componentID}'
             
-    assert False, 'getNextSymbol: No such symbol'
+            component: ColorComponent = self.image.colorComponents[componentID - 1]
+            assert component.usedInFrame, f'Error - Invalid color component ID: {componentID}'
 
-def decodeBlockComponent(image: JPGImage, br: Bitreader,
-                         component: list, previousDC, skips,
-                         dcTable: HuffmanTable, acTable: HuffmanTable):
-    
-    
+            assert not component.usedInScan, f'Error - Duplicate color component ID: {componentID}'
 
-    assert image.frameType == JPG.SOF0
+            component.usedInScan = True
 
-    length = getNextSymbol(br, dcTable)
+            huffmanTableIDs = self.br.readByte()
+            component.huffmanDCTableID = huffmanTableIDs >> 4
+            component.huffmanACTableID = huffmanTableIDs & 0x0F
 
-    assert length <= 11, 'Error - DC coefficient length greater than 11'
-    coeff = br.readBits(length)
-    
-    if length != 0 and coeff < (1 << (length - 1)):
-        coeff -= (1 << length) - 1
+            assert component.huffmanDCTableID <= 3, f'Error - Invalid Huffman DC table ID: {component.huffmanDCTableID}'
+            assert component.huffmanACTableID <= 3, f'Error - Invalid Huffman AC table ID: {component.huffmanACTableID}'
 
-    for i in range(64):
-        component[i] = 0
+        self.image.startOfSelection = self.br.readByte()
+        self.image.endOfSelection = self.br.readByte()
+        successiveApproximation = self.br.readByte()
 
-    component[0] = coeff + previousDC
-    previousDC = component[0]
+        self.image.successiveApproximationHigh = successiveApproximation >> 4
+        self.image.successiveApproximationLow = successiveApproximation & 0x0F
 
-    i = 1
-    while i < 64:
-        symbol = getNextSymbol(br, acTable)
+        if self.image.frameType == JPG.SOF0:
+            assert self.image.startOfSelection == 0 and self.image.endOfSelection == 63, \
+                'Error - Invalid spectral selection'
+            
+            assert self.image.successiveApproximationHigh == 0 and self.image.successiveApproximationLow == 0, \
+                'Error - Invalid successive approximation'
+        elif self.image.frameType == JPG.SOF2:
+            assert False, 'JPG.SOF2: Not supported'
 
-        if symbol == 0:
-            return previousDC, skips
-        
-        numZeroes = symbol >> 4
-        coeffLength = symbol & 0x0F
-        coeff = 0
+        for i in range(self.image.numComponents):
+            component: ColorComponent = self.image.colorComponents[i]
 
-        assert i + numZeroes < 64, 'Error - Zero run-length exceeded block component'
+            if component.usedInScan:
+                assert self.huff.dcTables[component.huffmanDCTableID].set, \
+                    'Error - Color component using uninitialized Huffman DC table'
 
-        i += numZeroes
+                assert self.huff.acTables[component.huffmanACTableID].set, \
+                    'Error - Color component using uninitialized Huffman AC table'
 
-        assert coeffLength <= 10, 'Error - AC coefficient length greater than 10'
+        assert length - 6 - (2 * self.image.componentsInScan) == 0, 'Error - SOS invalid'
 
-        if coeffLength:
+    def printScanInfo(self):
+        print("SOS=============\n")
+        print(f"Start of Selection: {self.image.startOfSelection}")
+        print(f"End of Selection: {self.image.endOfSelection}")
+        print(f"Successive Approximation High: {self.image.successiveApproximationHigh}")
+        print(f"Successive Approximation Low: {self.image.successiveApproximationLow}")
+        print("Color Components:\n")
+        for i in range(self.image.numComponents):
+            if (self.image.colorComponents[i].usedInScan):
+                print(f"Component ID: {(i + 1)}")
+                print(f"Huffman DC Table ID: {self.image.colorComponents[i].huffmanDCTableID}")
+                print(f"Huffman AC Table ID: {self.image.colorComponents[i].huffmanACTableID}")
 
-            coeff = br.readBits(coeffLength)
+        self.huff.printScanInfo()
 
-            if coeffLength and coeff < (1 << (coeffLength - 1)):
-                coeff -= (1 << coeffLength) - 1
+        print("DRI=============\n")
+        print(f"Restart Interval: {self.image.restartInterval}")
 
-            component[zigZagMap[i]] = coeff
+    def decodeHuffmanData(self):
+        previousDCs = [0] * 3
 
-        i += 1
+        luminanceOnly = self.image.componentsInScan == 1 and self.image.colorComponents[0].usedInScan
+        yStep = 1 if luminanceOnly else self.image.verticalSamplingFactor
+        xStep = 1 if luminanceOnly else self.image.horizontalSamplingFactor
+        restartInterval = int(self.image.restartInterval * xStep * yStep)
 
-    return previousDC, skips, 
+        for y in range(0, self.image.blockHeight, yStep):
+            for x in range(0, self.image.blockWidth, xStep):
+                if restartInterval != 0 and ((y * self.image.blockWidthReal + x) % restartInterval) == 0:
+                    previousDCs = [0] * 3
+                    self.br.align()
 
-def decodeHuffmanData(br: Bitreader, image: JPGImage):
-    previousDCs = [0] * 3
-    skips = 0
+                for i in range(self.image.numComponents):
+                    component: ColorComponent = self.image.colorComponents[i]
+                    if component.usedInScan:
+                        vMax = 1 if luminanceOnly else component.verticalSamplingFactor
+                        hMax = 1 if luminanceOnly else component.horizontalSamplingFactor
 
-    luminanceOnly = image.componentsInScan == 1 and image.colorComponents[0].usedInScan
-    yStep = 1 if luminanceOnly else image.verticalSamplingFactor
-    xStep = 1 if luminanceOnly else image.horizontalSamplingFactor
-    restartInterval = int(image.restartInterval * xStep * yStep)
+                        for v in range(vMax):
+                            for h in range(hMax):
+                                block = self.image.blocks[(y + v) * self.image.blockWidthReal + (x + h)].get(i)
+                                previousDCs[i] = self.huff.decodeBlockComponent(
+                                        block,
+                                        previousDCs[i],
+                                        component.huffmanDCTableID,
+                                        component.huffmanACTableID)
 
-    for y in range(0, image.blockHeight, yStep):
-        for x in range(0, image.blockWidth, xStep):
-            if restartInterval != 0 and ((y * image.blockWidthReal + x) % restartInterval) == 0:
-                previousDCs = [0] * 3
-                skips = 0
-                br.align()
+                                self.image.blocks[(y + v) * self.image.blockWidthReal + (x + h)].set(i, block)
 
-            for i in range(image.numComponents):
-                component: ColorComponent = image.colorComponents[i]
-                if component.usedInScan:
-                    vMax = 1 if luminanceOnly else component.verticalSamplingFactor
-                    hMax = 1 if luminanceOnly else component.horizontalSamplingFactor
+    def readScans(self):
+        self.readStartOfScan()
 
-                    for v in range(vMax):
-                        for h in range(hMax):
-                            block = image.blocks[(y + v) * image.blockWidthReal + (x + h)].get(i)
-                            previousDCs[i], skips = decodeBlockComponent(
-                                    image,
-                                    br,
-                                    block,
-                                    previousDCs[i],
-                                    skips,
-                                    image.huffmanDCTables[component.huffmanDCTableID],
-                                    image.huffmanACTables[component.huffmanACTableID])
+        self.printScanInfo()
 
-                            image.blocks[(y + v) * image.blockWidthReal + (x + h)].set(i, block)
+        self.decodeHuffmanData()
 
-def readScans(br: Bitreader, image: JPGImage):
-    readStartOfScan(br, image)
+        last = self.br.readByte()
+        current = self.br.readByte()
 
-    printScanInfo(image)
+        while True:
 
-    decodeHuffmanData(br, image)
+            assert last == 0xff, 'Error - Expected a marker'
 
-    last = br.readByte()
-    current = br.readByte()
+            if current == JPG.EOI:
+                break
 
-    while True:
+            assert self.image.frameType != JPG.SOF2
 
-        assert last == 0xff, 'Error - Expected a marker'
+            if current >= JPG.RST0 and current <= JPG.RST7:
+                pass
 
-        if current == JPG.EOI:
-            break
+            elif current == 0xff:
+                current = self.br.readByte()
+                continue
+            else:
+                assert False, f'Error - Invalid marker: {current}'
 
-        assert image.frameType != JPG.SOF2
+            last = self.br.readByte()
+            current = self.br.readByte()
 
-        if current >= JPG.RST0 and current <= JPG.RST7:
-            pass
+    def printFrameInfo(self):
+        print("SOF=============")
+        print(f"Frame Type: {hex(self.image.frameType)}")
+        print(f"Height: {self.image.height}")
+        print(f"Width: {self.image.width}")
+        print("Color Components:")
+        for i in range(self.image.numComponents):
+            if (self.image.colorComponents[i].usedInFrame):
+                print(f"Component ID: {i + 1}")
+                print(f"Horizontal Sampling Factor: {self.image.colorComponents[i].horizontalSamplingFactor}")
+                print(f"Vertical Sampling Factor: {self.image.colorComponents[i].verticalSamplingFactor}")
+                print(f"Quantization Table ID: {self.image.colorComponents[i].quantizationTableID}")
 
-        elif current == 0xff:
-            current = br.readByte()
-            continue
-        else:
-            assert False, f'Error - Invalid marker: {current}'
-
-        last = br.readByte()
-        current = br.readByte()
-
-def printFrameInfo(image: JPGImage):
-    print("SOF=============")
-    print(f"Frame Type: {hex(image.frameType)}")
-    print(f"Height: {image.height}")
-    print(f"Width: {image.width}")
-    print("Color Components:")
-    for i in range(image.numComponents):
-        if (image.colorComponents[i].usedInFrame):
-            print(f"Component ID: {i + 1}")
-            print(f"Horizontal Sampling Factor: {image.colorComponents[i].horizontalSamplingFactor}")
-            print(f"Vertical Sampling Factor: {image.colorComponents[i].verticalSamplingFactor}")
-            print(f"Quantization Table ID: {image.colorComponents[i].quantizationTableID}")
-
-    print("DQT=============")
-    for i in range (len(image.quantizationTables)):
-        qTable: QuantizationTable = image.quantizationTables[i]
-        if (qTable.set):
-            print(f"Table ID: {i}")
-            print("Table Data:")
-            for j, v in enumerate(qTable.table):
-                if (j % 8) == 0:
-                    print('')
-                print(f"{v} ", end='')
-            print('')
-
-    if False:
-        print("DHT=============")
-        for acdc in [image.huffmanDCTables, image.huffmanACTables]:
-            for i, hTable in enumerate(acdc):
-                if (hTable.set):
-                    print(f"Table ID: {i}")
-                    _map = {
-                        'Offsets': hTable.offsets,
-                        'Symbols': hTable.symbols,
-                        'Codes': hTable.codes
-                    }
-                    _to_print = ['Symbols', 'Offsets']
-                    for k in _map:
-                        if k in _to_print:
-                            print(f"{k}:")
-                            table = _map[k]
-
-                            for j, v in enumerate(table):
-                                if (j % 8) == 0:
-                                    print('')
-                                print(f"{hex(v)} ", end='')
-                            print('')
+        print("DQT=============")
+        for i in range (len(self.image.quantizationTables)):
+            qTable: QuantizationTable = self.image.quantizationTables[i]
+            if (qTable.set):
+                print(f"Table ID: {i}")
+                print("Table Data:")
+                for j, v in enumerate(qTable.table):
+                    if (j % 8) == 0:
+                        print('')
+                    print(f"{v} ", end='')
+                print('')
 
 
-def dequantizeBlockComponent(qTable: QuantizationTable, component: list):
-    for i in range(64):
-        component[i] *= qTable.table[i]
 
-def dequantize(image: JPGImage):
-    for y in range(0, image.blockHeight, image.verticalSamplingFactor):
-        for x in range(0, image.blockWidth, image.horizontalSamplingFactor):
-            for i in range(image.numComponents):
-                component: ColorComponent = image.colorComponents[i]
-                for v in range(component.verticalSamplingFactor):
-                    for h in range(component.horizontalSamplingFactor):
-                        block = image.blocks[(y + v) * image.blockWidthReal + (x + h)].get(i).copy()
+    def dequantizeBlockComponent(self, qTable: QuantizationTable, component: list):
+        for i in range(64):
+            component[i] *= qTable.table[i]
 
-                        dequantizeBlockComponent(image.quantizationTables[component.quantizationTableID],
-                                                 block)
-                        
-                        image.blocks[(y + v) * image.blockWidthReal + (x + h)].set(i, block)
-                        
-                        
+    def dequantize(self):
+        for y in range(0, self.image.blockHeight, self.image.verticalSamplingFactor):
+            for x in range(0, self.image.blockWidth, self.image.horizontalSamplingFactor):
+                for i in range(self.image.numComponents):
+                    component: ColorComponent = self.image.colorComponents[i]
+                    for v in range(component.verticalSamplingFactor):
+                        for h in range(component.horizontalSamplingFactor):
+                            block = self.image.blocks[(y + v) * self.image.blockWidthReal + (x + h)].get(i).copy()
 
-def inverseDCTBlockComponent(component: list):
+                            self.dequantizeBlockComponent(self.image.quantizationTables[component.quantizationTableID],
+                                                    block)
+                            
+                            self.image.blocks[(y + v) * self.image.blockWidthReal + (x + h)].set(i, block)
 
-    intermediate: list = [0.0] * 64
+    def inverseDCTBlockComponent(self, component: list):
 
-    for i in range(8):
-        g0 = component[0 * 8 + i] * s0
-        g1 = component[4 * 8 + i] * s4
-        g2 = component[2 * 8 + i] * s2
-        g3 = component[6 * 8 + i] * s6
-        g4 = component[5 * 8 + i] * s5
-        g5 = component[1 * 8 + i] * s1
-        g6 = component[7 * 8 + i] * s7
-        g7 = component[3 * 8 + i] * s3
+        intermediate: list = [0.0] * 64
 
-        f0 = g0
-        f1 = g1
-        f2 = g2
-        f3 = g3
-        f4 = g4 - g7
-        f5 = g5 + g6
-        f6 = g5 - g6
-        f7 = g4 + g7
+        for i in range(8):
+            g0 = component[0 * 8 + i] * s0
+            g1 = component[4 * 8 + i] * s4
+            g2 = component[2 * 8 + i] * s2
+            g3 = component[6 * 8 + i] * s6
+            g4 = component[5 * 8 + i] * s5
+            g5 = component[1 * 8 + i] * s1
+            g6 = component[7 * 8 + i] * s7
+            g7 = component[3 * 8 + i] * s3
 
-        e0 = f0
-        e1 = f1
-        e2 = f2 - f3
-        e3 = f2 + f3
-        e4 = f4
-        e5 = f5 - f7
-        e6 = f6
-        e7 = f5 + f7
-        e8 = f4 + f6
+            f0 = g0
+            f1 = g1
+            f2 = g2
+            f3 = g3
+            f4 = g4 - g7
+            f5 = g5 + g6
+            f6 = g5 - g6
+            f7 = g4 + g7
 
-        d0 = e0
-        d1 = e1
-        d2 = e2 * m1
-        d3 = e3
-        d4 = e4 * m2
-        d5 = e5 * m3
-        d6 = e6 * m4
-        d7 = e7
-        d8 = e8 * m5
+            e0 = f0
+            e1 = f1
+            e2 = f2 - f3
+            e3 = f2 + f3
+            e4 = f4
+            e5 = f5 - f7
+            e6 = f6
+            e7 = f5 + f7
+            e8 = f4 + f6
 
-        c0 = d0 + d1
-        c1 = d0 - d1
-        c2 = d2 - d3
-        c3 = d3
-        c4 = d4 + d8
-        c5 = d5 + d7
-        c6 = d6 - d8
-        c7 = d7
-        c8 = c5 - c6
+            d0 = e0
+            d1 = e1
+            d2 = e2 * m1
+            d3 = e3
+            d4 = e4 * m2
+            d5 = e5 * m3
+            d6 = e6 * m4
+            d7 = e7
+            d8 = e8 * m5
 
-        b0 = c0 + c3
-        b1 = c1 + c2
-        b2 = c1 - c2
-        b3 = c0 - c3
-        b4 = c4 - c8
-        b5 = c8
-        b6 = c6 - c7
-        b7 = c7
+            c0 = d0 + d1
+            c1 = d0 - d1
+            c2 = d2 - d3
+            c3 = d3
+            c4 = d4 + d8
+            c5 = d5 + d7
+            c6 = d6 - d8
+            c7 = d7
+            c8 = c5 - c6
 
-        intermediate[0 * 8 + i] = b0 + b7
-        intermediate[1 * 8 + i] = b1 + b6
-        intermediate[2 * 8 + i] = b2 + b5
-        intermediate[3 * 8 + i] = b3 + b4
-        intermediate[4 * 8 + i] = b3 - b4
-        intermediate[5 * 8 + i] = b2 - b5
-        intermediate[6 * 8 + i] = b1 - b6
-        intermediate[7 * 8 + i] = b0 - b7
+            b0 = c0 + c3
+            b1 = c1 + c2
+            b2 = c1 - c2
+            b3 = c0 - c3
+            b4 = c4 - c8
+            b5 = c8
+            b6 = c6 - c7
+            b7 = c7
 
-    for i in range(8):
-        g0 = intermediate[i * 8 + 0] * s0
-        g1 = intermediate[i * 8 + 4] * s4
-        g2 = intermediate[i * 8 + 2] * s2
-        g3 = intermediate[i * 8 + 6] * s6
-        g4 = intermediate[i * 8 + 5] * s5
-        g5 = intermediate[i * 8 + 1] * s1
-        g6 = intermediate[i * 8 + 7] * s7
-        g7 = intermediate[i * 8 + 3] * s3
+            intermediate[0 * 8 + i] = b0 + b7
+            intermediate[1 * 8 + i] = b1 + b6
+            intermediate[2 * 8 + i] = b2 + b5
+            intermediate[3 * 8 + i] = b3 + b4
+            intermediate[4 * 8 + i] = b3 - b4
+            intermediate[5 * 8 + i] = b2 - b5
+            intermediate[6 * 8 + i] = b1 - b6
+            intermediate[7 * 8 + i] = b0 - b7
 
-        f0 = g0
-        f1 = g1
-        f2 = g2
-        f3 = g3
-        f4 = g4 - g7
-        f5 = g5 + g6
-        f6 = g5 - g6
-        f7 = g4 + g7
+        for i in range(8):
+            g0 = intermediate[i * 8 + 0] * s0
+            g1 = intermediate[i * 8 + 4] * s4
+            g2 = intermediate[i * 8 + 2] * s2
+            g3 = intermediate[i * 8 + 6] * s6
+            g4 = intermediate[i * 8 + 5] * s5
+            g5 = intermediate[i * 8 + 1] * s1
+            g6 = intermediate[i * 8 + 7] * s7
+            g7 = intermediate[i * 8 + 3] * s3
 
-        e0 = f0
-        e1 = f1
-        e2 = f2 - f3
-        e3 = f2 + f3
-        e4 = f4
-        e5 = f5 - f7
-        e6 = f6
-        e7 = f5 + f7
-        e8 = f4 + f6
+            f0 = g0
+            f1 = g1
+            f2 = g2
+            f3 = g3
+            f4 = g4 - g7
+            f5 = g5 + g6
+            f6 = g5 - g6
+            f7 = g4 + g7
 
-        d0 = e0
-        d1 = e1
-        d2 = e2 * m1
-        d3 = e3
-        d4 = e4 * m2
-        d5 = e5 * m3
-        d6 = e6 * m4
-        d7 = e7
-        d8 = e8 * m5
+            e0 = f0
+            e1 = f1
+            e2 = f2 - f3
+            e3 = f2 + f3
+            e4 = f4
+            e5 = f5 - f7
+            e6 = f6
+            e7 = f5 + f7
+            e8 = f4 + f6
 
-        c0 = d0 + d1
-        c1 = d0 - d1
-        c2 = d2 - d3
-        c3 = d3
-        c4 = d4 + d8
-        c5 = d5 + d7
-        c6 = d6 - d8
-        c7 = d7
-        c8 = c5 - c6
+            d0 = e0
+            d1 = e1
+            d2 = e2 * m1
+            d3 = e3
+            d4 = e4 * m2
+            d5 = e5 * m3
+            d6 = e6 * m4
+            d7 = e7
+            d8 = e8 * m5
 
-        b0 = c0 + c3
-        b1 = c1 + c2
-        b2 = c1 - c2
-        b3 = c0 - c3
-        b4 = c4 - c8
-        b5 = c8
-        b6 = c6 - c7
-        b7 = c7
+            c0 = d0 + d1
+            c1 = d0 - d1
+            c2 = d2 - d3
+            c3 = d3
+            c4 = d4 + d8
+            c5 = d5 + d7
+            c6 = d6 - d8
+            c7 = d7
+            c8 = c5 - c6
 
-        component[i * 8 + 0] = b0 + b7 + 0.5
-        component[i * 8 + 1] = b1 + b6 + 0.5
-        component[i * 8 + 2] = b2 + b5 + 0.5
-        component[i * 8 + 3] = b3 + b4 + 0.5
-        component[i * 8 + 4] = b3 - b4 + 0.5
-        component[i * 8 + 5] = b2 - b5 + 0.5
-        component[i * 8 + 6] = b1 - b6 + 0.5
-        component[i * 8 + 7] = b0 - b7 + 0.5
+            b0 = c0 + c3
+            b1 = c1 + c2
+            b2 = c1 - c2
+            b3 = c0 - c3
+            b4 = c4 - c8
+            b5 = c8
+            b6 = c6 - c7
+            b7 = c7
 
-def inverseDCT(image: JPGImage):
-     for y in range(0, image.blockHeight, image.verticalSamplingFactor):
-        for x in range(0, image.blockWidth, image.horizontalSamplingFactor):
-            for i in range(image.numComponents):
-                component: ColorComponent = image.colorComponents[i]
-                for v in range(component.verticalSamplingFactor):
-                    for h in range(component.horizontalSamplingFactor):
-                           block = image.blocks[(y + v) * image.blockWidthReal + (x + h)].get(i)
-                           inverseDCTBlockComponent(block)
-                           image.blocks[(y + v) * image.blockWidthReal + (x + h)].set(i, block)
+            component[i * 8 + 0] = b0 + b7 + 0.5
+            component[i * 8 + 1] = b1 + b6 + 0.5
+            component[i * 8 + 2] = b2 + b5 + 0.5
+            component[i * 8 + 3] = b3 + b4 + 0.5
+            component[i * 8 + 4] = b3 - b4 + 0.5
+            component[i * 8 + 5] = b2 - b5 + 0.5
+            component[i * 8 + 6] = b1 - b6 + 0.5
+            component[i * 8 + 7] = b0 - b7 + 0.5
 
-def YCbCrToRGBBlock(yBlock: Block, cbcrBlock: Block, vSamp, hSamp, v, h):
-    for y in range(7, -1, -1):
-        for x in range(7, -1, -1):
-            pixel = y * 8 + x
-            cbcrPixelRow = y // vSamp + 4 * v
-            cbcrPixelColumn = x // hSamp + 4 * h
-            cbcrPixel = cbcrPixelRow * 8 + cbcrPixelColumn
-            r = yBlock.y_r[pixel]                                    + 1.402 * cbcrBlock.cr_b[cbcrPixel] + 128
-            g = yBlock.y_r[pixel] - 0.344 * cbcrBlock.cb_g[cbcrPixel] - 0.714 * cbcrBlock.cr_b[cbcrPixel] + 128
-            b = yBlock.y_r[pixel] + 1.772 * cbcrBlock.cb_g[cbcrPixel]                                    + 128
-            if (r < 0):   r = 0
-            if (r > 255): r = 255
-            if (g < 0):   g = 0
-            if (g > 255): g = 255
-            if (b < 0):   b = 0
-            if (b > 255): b = 255
-            yBlock.y_r[pixel] = r
-            yBlock.cb_g[pixel] = g
-            yBlock.cr_b[pixel] = b
+    def inverseDCT(self):
+        for y in range(0, self.image.blockHeight, self.image.verticalSamplingFactor):
+            for x in range(0, self.image.blockWidth, self.image.horizontalSamplingFactor):
+                for i in range(self.image.numComponents):
+                    component: ColorComponent = self.image.colorComponents[i]
+                    for v in range(component.verticalSamplingFactor):
+                        for h in range(component.horizontalSamplingFactor):
+                            block = self.image.blocks[(y + v) * self.image.blockWidthReal + (x + h)].get(i)
+                            self.inverseDCTBlockComponent(block)
+                            self.image.blocks[(y + v) * self.image.blockWidthReal + (x + h)].set(i, block)
 
-def YCbCrToRGB(image: JPGImage):
-    vSamp = image.verticalSamplingFactor
-    hSamp = image.horizontalSamplingFactor
-    for y in range(0, image.blockHeight, vSamp):
-        for x in range(0, image.blockWidth, hSamp):
-            cbcrBlock: Block = image.blocks[y * image.blockWidthReal + x]
-            for v in range(vSamp-1, -1, -1):
-                for h in range(hSamp-1, -1, -1):
-                    yBlock: Block = image.blocks[(y + v) * image.blockWidthReal + (x + h)]
-                    YCbCrToRGBBlock(yBlock, cbcrBlock, vSamp, hSamp, v, h)
+    def YCbCrToRGBBlock(self, yBlock: Block, cbcrBlock: Block, vSamp, hSamp, v, h):
+        for y in range(7, -1, -1):
+            for x in range(7, -1, -1):
+                pixel = y * 8 + x
+                cbcrPixelRow = y // vSamp + 4 * v
+                cbcrPixelColumn = x // hSamp + 4 * h
+                cbcrPixel = cbcrPixelRow * 8 + cbcrPixelColumn
+                r = yBlock.y_r[pixel]                                    + 1.402 * cbcrBlock.cr_b[cbcrPixel] + 128
+                g = yBlock.y_r[pixel] - 0.344 * cbcrBlock.cb_g[cbcrPixel] - 0.714 * cbcrBlock.cr_b[cbcrPixel] + 128
+                b = yBlock.y_r[pixel] + 1.772 * cbcrBlock.cb_g[cbcrPixel]                                    + 128
+                if (r < 0):   r = 0
+                if (r > 255): r = 255
+                if (g < 0):   g = 0
+                if (g > 255): g = 255
+                if (b < 0):   b = 0
+                if (b > 255): b = 255
+                yBlock.y_r[pixel] = r
+                yBlock.cb_g[pixel] = g
+                yBlock.cr_b[pixel] = b
+
+    def YCbCrToRGB(self):
+        vSamp = self.image.verticalSamplingFactor
+        hSamp = self.image.horizontalSamplingFactor
+        for y in range(0, self.image.blockHeight, vSamp):
+            for x in range(0, self.image.blockWidth, hSamp):
+                cbcrBlock: Block = self.image.blocks[y * self.image.blockWidthReal + x]
+                for v in range(vSamp-1, -1, -1):
+                    for h in range(hSamp-1, -1, -1):
+                        yBlock: Block = self.image.blocks[(y + v) * self.image.blockWidthReal + (x + h)]
+                        self.YCbCrToRGBBlock(yBlock, cbcrBlock, vSamp, hSamp, v, h)
 
 
 
@@ -766,26 +618,25 @@ def writeBMP(image: JPGImage, fpath):
 def readJPG(fpath: str):
     print(f'Reading {fpath}...')
     br = Bitreader(fpath)
+    decoder = Decoder(br)
 
-    image = JPGImage()
+    decoder.readFrameHeader()
 
-    readFrameHeader(br, image)
+    assert decoder.image.valid
 
-    assert image.valid
+    decoder.printFrameInfo()
 
-    printFrameInfo(image)
+    decoder.image.blocks = declList(Block, int(decoder.image.blockHeightReal * decoder.image.blockWidthReal))
 
-    image.blocks = declList(Block, int(image.blockHeightReal * image.blockWidthReal))
+    decoder.readScans()
 
-    readScans(br, image)
+    decoder.dequantize()
 
-    dequantize(image)
+    decoder.inverseDCT()
 
-    inverseDCT(image)
+    decoder.YCbCrToRGB()
 
-    YCbCrToRGB(image)
-
-    return image
+    return decoder.image
 
 if __name__ == '__main__':
     import sys

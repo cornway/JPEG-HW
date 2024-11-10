@@ -90,17 +90,22 @@ class JPG(IntEnum):
     COM = 0xFE
     TEM = 0x01
 
+zigZagMap = [
+    0,   1,  8, 16,  9,  2,  3, 10,
+    17, 24, 32, 25, 18, 11,  4,  5,
+    12, 19, 26, 33, 40, 48, 41, 34,
+    27, 20, 13,  6,  7, 14, 21, 28,
+    35, 42, 49, 56, 57, 50, 43, 36,
+    29, 22, 15, 23, 30, 37, 44, 51,
+    58, 59, 52, 45, 38, 31, 39, 46,
+    53, 60, 61, 54, 47, 55, 62, 63
+]
+
 def declList(_class, n, arg = None):
     return [(_class() if arg is None else _class(arg)) for _ in range(n)]
 
 class QuantizationTable:
     table: list = declList(int, 64, 0)
-    set: bool = False
-
-class HuffmanTable:
-    offsets: list = declList(int, 17, 0)
-    symbols: list = declList(int, 176, 0)
-    codes: list = declList(int, 176, 0)
     set: bool = False
 
 class ColorComponent:
@@ -137,8 +142,6 @@ class Block:
 
 class JPGImage:
     quantizationTables: list = declList(QuantizationTable, 4)
-    huffmanDCTables: list = declList(HuffmanTable, 4)
-    huffmanACTables: list = declList(HuffmanTable, 4)
     colorComponents: list = declList(ColorComponent, 4)
 
     frameType: int = 0
@@ -166,18 +169,6 @@ class JPGImage:
 
     horizontalSamplingFactor: int = 0
     verticalSamplingFactor: int = 0
-
-
-zigZagMap = [
-    0,   1,  8, 16,  9,  2,  3, 10,
-    17, 24, 32, 25, 18, 11,  4,  5,
-    12, 19, 26, 33, 40, 48, 41, 34,
-    27, 20, 13,  6,  7, 14, 21, 28,
-    35, 42, 49, 56, 57, 50, 43, 36,
-    29, 22, 15, 23, 30, 37, 44, 51,
-    58, 59, 52, 45, 38, 31, 39, 46,
-    53, 60, 61, 54, 47, 55, 62, 63
-]
 
 import math
 
