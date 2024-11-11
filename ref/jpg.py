@@ -118,7 +118,7 @@ class Block:
     cb_g: list = declList(int, 64, 0)
     cr_b: list = declList(int, 64, 0)
 
-    def get(self, i):
+    def __getitem__(self, i):
         assert i in [0, 1, 2]
         if i == 0:
             return self.y_r
@@ -127,7 +127,7 @@ class Block:
         if i == 2:
             return self.cr_b
         
-    def set(self, i, l: list):
+    def __setitem__(self, i, l: list):
         assert i in [0, 1, 2]
         if i == 0:
             self.y_r = l.copy()

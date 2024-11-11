@@ -48,31 +48,31 @@ class Quantization:
 
     def dequantize(self, image: JPGImage):
         if image.verticalSamplingFactor != 1 or image.horizontalSamplingFactor != 1:
+            assert False, 'Not Suported'
             self.dequantizeSample(image)
         else:
             self.dequantizeNoSample(image)
 
     def dequantizeSample(self, image: JPGImage):
-        assert False, 'Not Suported'
         for y in range(0, image.blockHeight, image.verticalSamplingFactor):
             for x in range(0, image.blockWidth, image.horizontalSamplingFactor):
                 for i in range(image.numComponents):
                     component: ColorComponent = image.colorComponents[i]
                     for v in range(component.verticalSamplingFactor):
                         for h in range(component.horizontalSamplingFactor):
-                            block = image.blocks[(y + v) * image.blockWidthReal + (x + h)].get(i).copy()
+                            block = image.blocks[(y + v) * image.blockWidthReal + (x + h)][i].copy()
 
                             self.dequantizeBlockComponent(image.quantizationTables[component.quantizationTableID],
                                                     block)
                             
-                            image.blocks[(y + v) * image.blockWidthReal + (x + h)].set(i, block)
+                            image.blocks[(y + v) * image.blockWidthReal + (x + h)][i] = block
 
     def dequantizeNoSample(self, image: JPGImage):
         for block in image.blocks:
             for i in range(image.numComponents):
                 component: ColorComponent = image.colorComponents[i]
                 self.dequantizeBlockComponent(self.quantizationTables[component.quantizationTableID],
-                                                    block.get(i))
+                                                    block[i])
                 
     def printInfo(self):
         print("DQT=============")

@@ -75,7 +75,7 @@ class HuffmanDecoder:
         assert False, 'getNextSymbol: No such symbol'
 
 
-    def decodeBlockComponent(self, block: np.ndarray, previousDC,
+    def decodeBlockComponent(self, previousDC,
                             dcTableId, acTableId):
     
         dcTable: HuffmanTable = self.dcTables[dcTableId]
@@ -89,8 +89,7 @@ class HuffmanDecoder:
         if length != 0 and coeff < (1 << (length - 1)):
             coeff -= (1 << length) - 1
 
-        for i in range(64):
-            block[i] = 0
+        block = np.zeros(64)
 
         block[0] = coeff + previousDC
         previousDC = block[0]
@@ -100,7 +99,7 @@ class HuffmanDecoder:
             symbol = self.getNextSymbol(acTable)
 
             if symbol == 0:
-                return previousDC
+                break
             
             numZeroes = symbol >> 4
             coeffLength = symbol & 0x0F
@@ -123,9 +122,20 @@ class HuffmanDecoder:
 
             i += 1
 
-        return previousDC
+        return previousDC, block
 
     def decodeHuffmanData(self, image: JPGImage):
+        luminanceOnly = image.componentsInScan == 1 and image.colorComponents[0].usedInScan
+        yStep = 1 if luminanceOnly else image.verticalSamplingFactor
+        xStep = 1 if luminanceOnly else image.horizontalSamplingFactor
+
+        if yStep != 1 or xStep != 1:
+            assert False, 'Not Supported'
+            self.decodeHuffmanDataSample(image)
+        else:
+            self.decodeHuffmanDataNoSample(image)
+
+    def decodeHuffmanDataSample(self, image: JPGImage):
         previousDCs = [0] * 3
 
         luminanceOnly = image.componentsInScan == 1 and image.colorComponents[0].usedInScan
@@ -145,15 +155,29 @@ class HuffmanDecoder:
 
                         for v in range(yStep):
                             for h in range(xStep):
-                                block = image.blocks[(y + v) * image.blockWidthReal + (x + h)].get(i)
-                                previousDCs[i] = self.decodeBlockComponent(
-                                        block,
+                                previousDCs[i], block = self.decodeBlockComponent(
                                         previousDCs[i],
                                         component.huffmanDCTableID,
                                         component.huffmanACTableID)
 
-                                image.blocks[(y + v) * image.blockWidthReal + (x + h)].set(i, block)
+                                image.blocks[(y + v) * image.blockWidthReal + (x + h)][i] = block
 
+
+    def decodeHuffmanDataNoSample(self, image: JPGImage):
+        previousDCs = [0] * 3
+        restartInterval = image.restartInterval
+        for nb in range(len(image.blocks)):
+            if restartInterval != 0 and (nb % restartInterval) == 0:
+                previousDCs = [0] * 3
+                self.br.align()
+
+            for i in range(image.numComponents):
+                component: ColorComponent = image.colorComponents[i]
+                previousDCs[i], block = self.decodeBlockComponent(
+                                        previousDCs[i],
+                                        component.huffmanDCTableID,
+                                        component.huffmanACTableID)
+                image.blocks[nb][i] = block
 
     def printScanInfo(self):
         print("DHT=============\n")

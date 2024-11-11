@@ -180,12 +180,12 @@ class Dct:
                     component: ColorComponent = image.colorComponents[i]
                     for v in range(component.verticalSamplingFactor):
                         for h in range(component.horizontalSamplingFactor):
-                            block = image.blocks[(y + v) * image.blockWidthReal + (x + h)].get(i)
+                            block = image.blocks[(y + v) * image.blockWidthReal + (x + h)][i]
                             self.inverseDCTBlockComponent(block)
-                            image.blocks[(y + v) * image.blockWidthReal + (x + h)].set(i, block)
+                            image.blocks[(y + v) * image.blockWidthReal + (x + h)][i] = block
 
 
     def inverseDCTNoSample(self, image: JPGImage):
         for block in image.blocks:
             for i in range(image.numComponents):
-                self.inverseDCTBlockComponent(block.get(i))
+                self.inverseDCTBlockComponent(block[i])
